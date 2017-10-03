@@ -144,6 +144,37 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
      * note: lookup is what you need to check if file exist;
      * after create file or dir, you must remember to modify the parent infomation.
      */
+    bool found = false;
+    std::string buf;
+    
+    r = lookup(parent, name, found, ino_out);
+    if(r != OK){
+      printf("CREATE: Fail to lookup the parent directory\n");
+      return r;
+    }
+
+    if(found){
+      printf("CREATE: File or dir already exists\n");
+      return EXIST;
+    }
+
+    r = ec -> get(parent, buf);
+    if(r != OK){
+      printf("CREATE: Can not read the parent directory\n");
+      return r;
+    }
+
+    r = ec -> create(extent_protocol::T_FILE, ino_out);
+    if(r != OK){
+      printf("CREATE: Can not create file\n");
+      return r;
+    }
+
+    buf.append(std::string(name) + "/" + filename(ino_out) + "/");
+    r = ec -> put(parent, buf);
+    if(r != OK){
+      printf("CREATE: Can not modify parent information\n");
+    }
 
     return r;
 }
@@ -158,6 +189,37 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
      * note: lookup is what you need to check if directory exist;
      * after create file or dir, you must remember to modify the parent infomation.
      */
+    bool found = false;
+    std::string buf;
+    
+    r = lookup(parent, name, found, ino_out);
+    if(r != OK){
+      printf("MKDIR: Fail to lookup the parent directory\n");
+      return r;
+    }
+
+    if(found){
+      printf("MKDIR: File or dir already exists\n");
+      return EXIST;
+    }
+
+    r = ec -> get(parent, buf);
+    if(r != OK){
+      printf("CREATE: Can not read the parent directory\n");
+      return r;
+    }
+
+    r = ec -> create(extent_protocol::T_DIR, ino_out);
+    if(r != OK){
+      printf("MKDIR: Can not create dir\n");
+      return r;
+    }
+
+    buf.append(std::string(name) + "/" + filename(ino_out) + "/");
+    r = ec -> put(parent, buf);
+    if(r != OK){
+      printf("MKDIR: Can not modify parent information\n");
+    }
 
     return r;
 }
@@ -172,6 +234,30 @@ yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
      * note: lookup file from parent dir according to name;
      * you should design the format of directory content.
      */
+    std::string buf, name_str = std::string(name);
+    size_t cur = 0, next = 0;
+
+    r = ec ->get(parent, buf);
+    if(r != OK){
+      printf("LOOKUP: Parent directory not exists\n");
+      return r;
+    }
+
+    while(cur < buf.size()){
+      next = buf.find("/", cur);
+      std::string cur_name = buf.substr(cur, next - cur);
+      cur = next + 1;
+
+      next = buf.find("/", cur);
+      inum cur_ino = n2i(buf.substr(cur, next - cur));
+      cur = next + 1;
+
+      if(cur_name == name_str){
+        ino_out = cur_ino;
+        found = true;
+        return r;
+      }
+    }
 
     return r;
 }
@@ -186,6 +272,28 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
      * note: you should parse the dirctory content using your defined format,
      * and push the dirents to the list.
      */
+    std::string buf;
+    size_t cur = 0, next = 0;
+
+    r = ec -> get(dir, buf);
+    if(r != OK){
+      printf("READDIR: Dir not exists\n");
+      return r;
+    }
+
+
+    while(cur < buf.size()){
+      struct dirent dirent;
+      next = buf.find("/", cur);
+      dirent.name = buf.substr(cur, next - cur);
+      cur = next + 1;
+
+      next = buf.find("/", cur);
+      dirent.inum = n2i(buf.substr(cur, next - cur));
+      cur = next + 1;
+
+      list.push_back(dirent);
+    }
 
     return r;
 }
