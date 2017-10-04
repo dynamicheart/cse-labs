@@ -62,6 +62,8 @@ yfs_client::isfile(inum inum)
  * 
  * */
 
+#define MAX(x, y) (((x) > (y)) ? (x) : (y))
+
 bool
 yfs_client::isdir(inum inum)
 {
@@ -130,6 +132,21 @@ yfs_client::setattr(inum ino, size_t size)
      * note: get the content of inode ino, and modify its content
      * according to the size (<, =, or >) content length.
      */
+    std::string buf;
+
+    r = ec -> get(ino, buf);
+    if(r != OK){
+      printf("SETATTR: Can not get the content\n");
+      return r;
+    }
+
+    buf.resize(size);
+
+    r = ec -> put(ino, buf);
+    if(r != OK){
+      printf("SETATTR: Can not modify the content\n");
+      return r;
+    }
 
     return r;
 }
@@ -307,6 +324,19 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
      * your lab2 code goes here.
      * note: read using ec->get().
      */
+    std::string buf;
+    
+    r = ec -> get(ino, buf);
+    if(r != OK){
+      printf("READ: Can not get the content\n");
+      return r;
+    }
+
+    if(off <= (int)buf.size()){
+      data = buf.substr(off, size);
+    }else{
+      data = "";
+    }
 
     return r;
 }
@@ -322,6 +352,33 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
      * note: write using ec->put().
      * when off > length of original file, fill the holes with '\0'.
      */
+    std::string buf;
+
+    r = ec -> get(ino, buf);
+    if(r != OK){
+      printf("WRITE: Can not get the content\n");
+      return r;
+    }
+
+    if(off > (int)buf.size()){
+      buf.resize(off, '\0');
+      buf.append(data, size);
+    }else{
+      if(off + size > buf.size()){
+        buf.resize(off);
+        buf.append(data, size);
+      }else{
+        buf.replace(off, size, data, size);
+      }
+    }
+
+    r = ec -> put(ino, buf);
+    if(r != OK){
+      printf("\n");
+      return r;
+    }
+
+    bytes_written = size;
 
     return r;
 }
@@ -335,6 +392,54 @@ int yfs_client::unlink(inum parent,const char *name)
      * note: you should remove the file using ec->remove,
      * and update the parent directory content.
      */
+    std::string buf, entry_name, name_str = std::string(name);
+    size_t cur = 0, next = 0, entry_off = 0, entry_len = 0;
+    inum ino;
+    bool found = false;
+
+    r = ec -> get(parent, buf);
+    if(r != OK){
+      printf("UNLINK: Can not get the content of parent directory\n");
+      return r;
+    }
+
+    while(cur < buf.size()){
+      entry_off = cur;
+
+      next = buf.find("/", cur);
+      entry_name = buf.substr(cur, next - cur);
+      cur = next + 1; 
+
+      next = buf.find("/", cur);
+      ino = n2i(buf.substr(cur, next - cur));
+      cur = next + 1;
+
+      entry_len = next - entry_off;
+
+      if(entry_name == name_str){
+        found = true;
+        break;
+      }
+      
+    }
+
+    if(!found){
+      printf("UNLINK: No such file\n");
+      return NOENT;
+    }
+
+    buf.erase(entry_off, entry_len);
+    r = ec -> put(parent, buf);
+    if(r != OK){
+      printf("UNLINK: Error while updating parent directory content\n");
+      return r;
+    }
+
+    r = ec -> remove(ino);
+    if(r != OK){
+      printf("UNLINK: Can not remove the file\n");
+      return r;
+    }
 
     return r;
 }
