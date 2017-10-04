@@ -392,6 +392,7 @@ int yfs_client::unlink(inum parent,const char *name)
      * note: you should remove the file using ec->remove,
      * and update the parent directory content.
      */
+
     std::string buf, entry_name, name_str = std::string(name);
     size_t cur = 0, next = 0, entry_off = 0, entry_len = 0;
     inum ino;
@@ -414,13 +415,12 @@ int yfs_client::unlink(inum parent,const char *name)
       ino = n2i(buf.substr(cur, next - cur));
       cur = next + 1;
 
-      entry_len = next - entry_off;
+      entry_len = cur - entry_off;
 
       if(entry_name == name_str){
         found = true;
         break;
       }
-      
     }
 
     if(!found){
