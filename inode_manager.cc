@@ -106,16 +106,16 @@ block_manager::block_manager()
   sb.nblocks = BLOCK_NUM;
   sb.ninodes = INODE_NUM;
 
-  int non_data_block_num = 0;
+  int init_num = 0;
   // root block
-  non_data_block_num++;
+  init_num++;
   // supper block
-  non_data_block_num++;
+  init_num++;
   // block bitmap
-  non_data_block_num +=  (BLOCK_NUM + BPB - 1) / BPB;
+  init_num +=  (BLOCK_NUM + BPB - 1) / BPB;
   // inode table
-  non_data_block_num += (INODE_NUM + IPB - 1) / IPB;
-  for(int i = 0; i < non_data_block_num; i++){
+  init_num += (INODE_NUM + IPB - 1) / IPB;
+  for(int i = 0; i < init_num; i++){
     alloc_block();
   }
 }
@@ -158,7 +158,6 @@ inode_manager::alloc_inode(uint32_t type)
    */
   char buf[BLOCK_SIZE];
   uint32_t inum = 1;
-  unsigned int current_time = std::time(0);
 
   while(inum <= INODE_NUM){
     bm -> read_block(IBLOCK(inum, BLOCK_NUM), buf);
@@ -168,9 +167,9 @@ inode_manager::alloc_inode(uint32_t type)
         inode -> type = type;
         inode -> size = 0;
 
-        inode -> atime = current_time;
-        inode -> mtime = current_time;
-        inode -> ctime = current_time;
+        inode -> atime = std::time(0);
+        inode -> mtime = std::time(0);
+        inode -> ctime = std::time(0);
 
         bm->write_block(IBLOCK(inum, BLOCK_NUM), buf);
         return inum;
@@ -299,9 +298,8 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
     }
   }
 
-  unsigned int current_time = std::time(0);
-  ino -> atime = current_time;
-  ino -> ctime = current_time;
+  ino -> atime = std::time(0);
+  ino -> ctime = std::time(0);
   *size = ino -> size;
   *buf_out = buf;
 
@@ -413,9 +411,8 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     }
   }
 
-  unsigned int current_time = std::time(0);
-  ino -> mtime = current_time;
-  ino -> ctime = current_time;
+  ino -> mtime = std::time(0);
+  ino -> ctime = std::time(0);
   ino -> size = size;
   put_inode(inum, ino);
   free(ino);
