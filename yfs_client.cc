@@ -53,7 +53,7 @@ yfs_client::isfile(inum inum)
         printf("isfile: %lld is a file\n", inum);
         return true;
     } 
-    printf("isfile: %lld is a dir\n", inum);
+    printf("isfile: %lld is not a file\n", inum);
     return false;
 }
 /** Your code here for Lab...
@@ -62,13 +62,43 @@ yfs_client::isfile(inum inum)
  * 
  * */
 
-#define MAX(x, y) (((x) > (y)) ? (x) : (y))
-
 bool
 yfs_client::isdir(inum inum)
 {
     // Oops! is this still correct when you implement symlink?
-    return ! isfile(inum);
+    // return ! isfile(inum);
+    
+    extent_protocol::attr a;
+
+    if (ec->getattr(inum, a) != extent_protocol::OK) {
+        printf("error getting attr\n");
+        return false;
+    }
+
+    if (a.type == extent_protocol::T_DIR) {
+        printf("ISDIR: %lld is a dir\n", inum);
+        return true;
+    } 
+    printf("ISDIR: %lld is not a dir\n", inum);
+    return false;
+}
+
+bool
+yfs_client::issymlink(inum inum)
+{
+    extent_protocol::attr a;
+
+    if (ec->getattr(inum, a) != extent_protocol::OK) {
+        printf("error getting attr\n");
+        return false;
+    }
+
+    if (a.type == extent_protocol::T_DIR) {
+        printf("ISSYMLINK: %lld is a symlink\n", inum);
+        return true;
+    } 
+    printf("ISSYMLINK: %lld is not a symlink\n", inum);
+    return false;
 }
 
 int
@@ -136,16 +166,16 @@ yfs_client::setattr(inum ino, size_t size)
 
     r = ec -> get(ino, buf);
     if(r != OK){
-      printf("SETATTR: Can not get the content\n");
-      return r;
+        printf("SETATTR: Can not get the content\n");
+        return r;
     }
 
     buf.resize(size);
 
     r = ec -> put(ino, buf);
     if(r != OK){
-      printf("SETATTR: Can not modify the content\n");
-      return r;
+        printf("SETATTR: Can not modify the content\n");
+        return r;
     }
 
     return r;
@@ -166,31 +196,31 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
     
     r = lookup(parent, name, found, ino_out);
     if(r != OK){
-      printf("CREATE: Fail to lookup the parent directory\n");
-      return r;
+        printf("CREATE: Fail to lookup the parent directory\n");
+        return r;
     }
 
     if(found){
-      printf("CREATE: File or dir already exists\n");
-      return EXIST;
+        printf("CREATE: File or dir already exists\n");
+        return EXIST;
     }
 
     r = ec -> get(parent, buf);
     if(r != OK){
-      printf("CREATE: Can not read the parent directory\n");
-      return r;
+        printf("CREATE: Can not read the parent directory\n");
+        return r;
     }
 
     r = ec -> create(extent_protocol::T_FILE, ino_out);
     if(r != OK){
-      printf("CREATE: Can not create file\n");
-      return r;
+        printf("CREATE: Can not create file\n");
+        return r;
     }
 
     buf.append(std::string(name) + "/" + filename(ino_out) + "/");
     r = ec -> put(parent, buf);
     if(r != OK){
-      printf("CREATE: Can not modify parent information\n");
+        printf("CREATE: Can not modify parent information\n");
     }
 
     return r;
@@ -211,31 +241,31 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
     
     r = lookup(parent, name, found, ino_out);
     if(r != OK){
-      printf("MKDIR: Fail to lookup the parent directory\n");
-      return r;
+        printf("MKDIR: Fail to lookup the parent directory\n");
+        return r;
     }
 
     if(found){
-      printf("MKDIR: File or dir already exists\n");
-      return EXIST;
+        printf("MKDIR: File or dir already exists\n");
+        return EXIST;
     }
 
     r = ec -> get(parent, buf);
     if(r != OK){
-      printf("CREATE: Can not read the parent directory\n");
-      return r;
+        printf("CREATE: Can not read the parent directory\n");
+        return r;
     }
 
     r = ec -> create(extent_protocol::T_DIR, ino_out);
     if(r != OK){
-      printf("MKDIR: Can not create dir\n");
-      return r;
+        printf("MKDIR: Can not create dir\n");
+        return r;
     }
 
     buf.append(std::string(name) + "/" + filename(ino_out) + "/");
     r = ec -> put(parent, buf);
     if(r != OK){
-      printf("MKDIR: Can not modify parent information\n");
+        printf("MKDIR: Can not modify parent information\n");
     }
 
     return r;
@@ -256,24 +286,24 @@ yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
 
     r = ec ->get(parent, buf);
     if(r != OK){
-      printf("LOOKUP: Parent directory not exists\n");
-      return r;
+        printf("LOOKUP: Parent directory not exists\n");
+        return r;
     }
 
     while(cur < buf.size()){
-      next = buf.find("/", cur);
-      std::string cur_name = buf.substr(cur, next - cur);
-      cur = next + 1;
+        next = buf.find("/", cur);
+        std::string cur_name = buf.substr(cur, next - cur);
+        cur = next + 1;
 
-      next = buf.find("/", cur);
-      inum cur_ino = n2i(buf.substr(cur, next - cur));
-      cur = next + 1;
+        next = buf.find("/", cur);
+        inum cur_ino = n2i(buf.substr(cur, next - cur));
+        cur = next + 1;
 
-      if(cur_name == name_str){
-        ino_out = cur_ino;
-        found = true;
-        return r;
-      }
+        if(cur_name == name_str){
+            ino_out = cur_ino;
+            found = true;
+            return r;
+        }
     }
 
     return r;
@@ -294,22 +324,22 @@ yfs_client::readdir(inum dir, std::list<dirent> &list)
 
     r = ec -> get(dir, buf);
     if(r != OK){
-      printf("READDIR: Dir not exists\n");
-      return r;
+        printf("READDIR: Dir not exists\n");
+        return r;
     }
 
 
     while(cur < buf.size()){
-      struct dirent dirent;
-      next = buf.find("/", cur);
-      dirent.name = buf.substr(cur, next - cur);
-      cur = next + 1;
+        struct dirent dirent;
+        next = buf.find("/", cur);
+        dirent.name = buf.substr(cur, next - cur);
+        cur = next + 1;
 
-      next = buf.find("/", cur);
-      dirent.inum = n2i(buf.substr(cur, next - cur));
-      cur = next + 1;
+        next = buf.find("/", cur);
+        dirent.inum = n2i(buf.substr(cur, next - cur));
+        cur = next + 1;
 
-      list.push_back(dirent);
+        list.push_back(dirent);
     }
 
     return r;
@@ -328,14 +358,14 @@ yfs_client::read(inum ino, size_t size, off_t off, std::string &data)
     
     r = ec -> get(ino, buf);
     if(r != OK){
-      printf("READ: Can not get the content\n");
-      return r;
+        printf("READ: Can not get the content\n");
+        return r;
     }
 
     if(off <= (int)buf.size()){
-      data = buf.substr(off, size);
+        data = buf.substr(off, size);
     }else{
-      data = "";
+        data = "";
     }
 
     return r;
@@ -356,26 +386,26 @@ yfs_client::write(inum ino, size_t size, off_t off, const char *data,
 
     r = ec -> get(ino, buf);
     if(r != OK){
-      printf("WRITE: Can not get the content\n");
-      return r;
+        printf("WRITE: Can not get the content\n");
+        return r;
     }
 
     if(off > (int)buf.size()){
-      buf.resize(off, '\0');
-      buf.append(data, size);
-    }else{
-      if(off + size > buf.size()){
-        buf.resize(off);
+        buf.resize(off, '\0');
         buf.append(data, size);
-      }else{
-        buf.replace(off, size, data, size);
-      }
+    }else{
+        if(off + size > buf.size()){
+          buf.resize(off);
+          buf.append(data, size);
+        }else{
+          buf.replace(off, size, data, size);
+        }
     }
 
     r = ec -> put(ino, buf);
     if(r != OK){
-      printf("\n");
-      return r;
+        printf("\n");
+        return r;
     }
 
     bytes_written = size;
@@ -400,45 +430,111 @@ int yfs_client::unlink(inum parent,const char *name)
 
     r = ec -> get(parent, buf);
     if(r != OK){
-      printf("UNLINK: Can not get the content of parent directory\n");
-      return r;
+        printf("UNLINK: Can not get the content of parent directory\n");
+        return r;
     }
 
     while(cur < buf.size()){
-      entry_off = cur;
+        entry_off = cur;
 
-      next = buf.find("/", cur);
-      entry_name = buf.substr(cur, next - cur);
-      cur = next + 1; 
+        next = buf.find("/", cur);
+        entry_name = buf.substr(cur, next - cur);
+        cur = next + 1; 
 
-      next = buf.find("/", cur);
-      ino = n2i(buf.substr(cur, next - cur));
-      cur = next + 1;
+        next = buf.find("/", cur);
+        ino = n2i(buf.substr(cur, next - cur));
+        cur = next + 1;
 
-      entry_len = cur - entry_off;
+        entry_len = cur - entry_off;
 
-      if(entry_name == name_str){
-        found = true;
-        break;
-      }
+        if(entry_name == name_str){
+            found = true;
+            break;
+        }
     }
 
     if(!found){
-      printf("UNLINK: No such file\n");
-      return NOENT;
+        printf("UNLINK: No such file\n");
+        return NOENT;
     }
 
     buf.erase(entry_off, entry_len);
     r = ec -> put(parent, buf);
     if(r != OK){
-      printf("UNLINK: Error while updating parent directory content\n");
-      return r;
+        printf("UNLINK: Error while updating parent directory content\n");
+        return r;
     }
 
     r = ec -> remove(ino);
     if(r != OK){
-      printf("UNLINK: Can not remove the file\n");
-      return r;
+        printf("UNLINK: Can not remove the file\n");
+        return r;
+    }
+
+    return r;
+}
+
+int
+yfs_client::readlink(inum ino, std::string &link)
+{
+    int r = OK;
+
+    std::string buf;
+    r = ec -> get(ino, buf);
+
+    if(r != OK){
+        printf("READLINK: Can not get the file content\n");
+        return r;
+    }
+
+    link = buf;
+
+    return r;
+}
+
+int yfs_client::symlink(inum parent, const char *name, const char *link,
+    inum &ino_out)
+{
+    int r = OK;
+
+    bool found = false;
+    std::string pbuf, sbuf;
+
+    r = lookup(parent, name, found, ino_out);
+    if(r != OK){
+        printf("SYMLINK: Can not look up the parent directory\n");
+        return r;
+    }
+
+    if(found){
+        printf("SYMLINK: Name already exists\n");
+        return EXIST;
+    }
+
+    r = ec -> get(parent, pbuf);
+    if(r != OK){
+        printf("SYMLINK: Can not read the parent directory\n");
+        return r;
+    }
+
+    r = ec -> create(extent_protocol::T_SYMLINK, ino_out);
+    if(r != OK){
+        printf("SYMLINK: Can not create file\n");
+        return r;
+    }
+
+    sbuf = std::string(link);
+    r = ec -> put(ino_out, sbuf);
+    if(r != OK){
+        printf("SYMLINK: Can not update the symlink\n");
+        return r;
+    }
+
+    pbuf.append(std::string(name) + "/" + filename(ino_out) + "/");
+    r = ec -> put(parent, pbuf);
+    if(r != OK){
+        printf("SYMLINK: Can not modify parent infomation\n");
+        return r;
     }
 
     return r;
