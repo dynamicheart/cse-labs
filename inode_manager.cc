@@ -325,7 +325,6 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
   int new_block_num = (size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   int offset = 0;
 
-  bm -> read_block(62, block);
   // allocate new blocks or free some blocks
   if(new_block_num > old_block_num){
     if(old_block_num > NDIRECT){
@@ -376,8 +375,6 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
     }
   }
 
-
-  bm -> read_block(62, block);
   if(new_block_num <= NDIRECT){
     for(int i = 0; i < new_block_num; i++){
       if(size - offset > BLOCK_SIZE){
@@ -390,8 +387,6 @@ inode_manager::write_file(uint32_t inum, const char *buf, int size)
       }
     }
   }else{
-    
-    bm -> read_block(62, block);
     for(int i = 0; i < NDIRECT; i++){
       bm -> write_block(ino -> blocks[i], buf + offset); 
       offset += BLOCK_SIZE;
