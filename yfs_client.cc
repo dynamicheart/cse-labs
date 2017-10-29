@@ -1,4 +1,4 @@
-// yfs client.  implements FS operations using extent server
+// yfs client.  implements FS operations using extent and lock server
 #include "yfs_client.h"
 #include "extent_client.h"
 #include <sstream>
@@ -9,9 +9,10 @@
 #include <sys/stat.h>
 #include <fcntl.h>
 
-yfs_client::yfs_client(std::string extent_dst)
+yfs_client::yfs_client(std::string extent_dst, std::string lock_dst)
 {
   ec = new extent_client(extent_dst);
+  lc = new lock_client(lock_dst);
   if (ec->put(1, "") != extent_protocol::OK)
       printf("error init root dir\n"); // XYB: init root dir
 }
