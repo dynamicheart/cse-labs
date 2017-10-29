@@ -3,17 +3,12 @@
 
 #include <string>
 
-#include "lock_protocol.h"
-#include "lock_client.h"
-
-//#include "yfs_protocol.h"
 #include "extent_client.h"
 #include <vector>
 
 
 class yfs_client {
   extent_client *ec;
-  lock_client *lc;
  public:
 
   typedef unsigned long long inum;
@@ -41,10 +36,11 @@ class yfs_client {
   static inum n2i(std::string);
 
  public:
-  yfs_client(std::string, std::string);
+  yfs_client(std::string);
 
   bool isfile(inum);
   bool isdir(inum);
+  bool issymlink(inum);
 
   int getfile(inum, fileinfo &);
   int getdir(inum, dirinfo &);
@@ -57,6 +53,10 @@ class yfs_client {
   int read(inum, size_t, off_t, std::string &);
   int unlink(inum,const char *);
   int mkdir(inum , const char *, mode_t , inum &);
+  
+  /** you may need to add symbolic link related methods here.*/
+  int readlink(inum, std::string &);
+  int symlink(inum, const char *, const char *, inum &);
 };
 
 #endif 
