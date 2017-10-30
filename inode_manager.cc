@@ -58,6 +58,7 @@ block_manager::alloc_block()
   char current_byte;
   char mask;
   blockid_t bid = 0;
+  pthread_mutex_lock(&bitmap_mutex);
   while(bid < BLOCK_NUM){
     read_block(BBLOCK(bid), block);
     for(int i = 0; i < BLOCK_SIZE; i ++){
@@ -69,11 +70,13 @@ block_manager::alloc_block()
         }else{
           block[i] = current_byte | mask;
           write_block(BBLOCK(bid), block);
+          pthread_mutex_unlock(&bitmap_mutex);
           return bid;
         }
       }
     }
   }
+  pthread_mutex_unlock(&bitmap_mutex);
   printf("\tim: out of blocks\n");
   exit(0);
 }
@@ -118,6 +121,8 @@ block_manager::block_manager()
   for(int i = 0; i < init_num; i++){
     alloc_block();
   }
+
+  pthread_mutex_init(&bitmap_mutex, NULL);
 }
 
   void
@@ -142,6 +147,7 @@ inode_manager::inode_manager()
     printf("\tim: error! alloc first inode %d, should be 1\n", root_dir);
     exit(0);
   }
+  pthread_mutex_init(&inode_mutex, NULL);
 }
 
 /* Create a new file.
@@ -159,6 +165,7 @@ inode_manager::alloc_inode(uint32_t type)
   char buf[BLOCK_SIZE];
   uint32_t inum = 1;
 
+  pthread_mutex_lock(&inode_mutex);
   while(inum <= INODE_NUM){
     bm -> read_block(IBLOCK(inum, BLOCK_NUM), buf);
     for(int i = 0; i < IPB && inum <= INODE_NUM; i++){
@@ -172,12 +179,15 @@ inode_manager::alloc_inode(uint32_t type)
         inode -> ctime = std::time(0);
 
         bm->write_block(IBLOCK(inum, BLOCK_NUM), buf);
+        pthread_mutex_unlock(&inode_mutex);
         return inum;
       }else{
         inum++;
       }
     }
   }
+
+  pthread_mutex_unlock(&inode_mutex);
   exit(1);
 }
 
