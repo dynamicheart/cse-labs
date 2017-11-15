@@ -31,6 +31,9 @@ typedef struct superblock {
   uint32_t size;
   uint32_t nblocks;
   uint32_t ninodes;
+  uint32_t version;
+  uint32_t next_inum;
+  uint32_t seq_end;
 } superblock_t;
 
 class block_manager {
@@ -71,6 +74,9 @@ class block_manager {
 
 typedef struct inode {
   short type;
+  unsigned check_point;
+  unsigned int inum;
+  unsigned int seq;
   unsigned int size;
   unsigned int atime;
   unsigned int mtime;
@@ -93,6 +99,9 @@ class inode_manager {
   void write_file(uint32_t inum, const char *buf, int size);
   void remove_file(uint32_t inum);
   void getattr(uint32_t inum, extent_protocol::attr &a);
+  void commit();
+  void undo();
+  void redo();
 };
 
 #endif

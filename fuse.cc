@@ -15,6 +15,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <signal.h>
 #include "lang/verify.h"
 #include "yfs_client.h"
 
@@ -560,6 +561,26 @@ fuseserver_symlink(fuse_req_t req, const char *link, fuse_ino_t parent, const ch
 
 struct fuse_lowlevel_ops fuseserver_oper;
 
+void sig_handler(int no)
+{
+  switch(no){
+    case SIGINT:
+      printf("commit a new version\n");
+      yfs -> commit();
+      break;
+    case SIGUSR1:
+      printf("to previous version\n");
+      yfs -> undo();
+      break;
+    case SIGUSR2:
+      printf("to next version\n");
+      yfs -> redo();
+      break;
+    default:
+      break;
+  }
+}
+
   int
 main(int argc, char *argv[])
 {
@@ -588,6 +609,19 @@ main(int argc, char *argv[])
 
   yfs = new yfs_client(argv[2], argv[3], argv[4]);
   // yfs = new yfs_client();
+  if(signal(SIGINT, sig_handler) == SIG_ERR){
+    printf("signal SIGINT error\n");
+    exit(1);
+  }
+  if(signal(SIGUSR1, sig_handler) == SIG_ERR){
+  
+    printf("signal SIGINT error\n");
+    exit(1);
+  }
+  if(signal(SIGUSR2, sig_handler) == SIG_ERR){ 
+    printf("signal SIGINT error\n");
+    exit(1);
+  }
 
   fuseserver_oper.getattr    = fuseserver_getattr;
   fuseserver_oper.statfs     = fuseserver_statfs;
@@ -668,3 +702,4 @@ main(int argc, char *argv[])
 
   return err ? 1 : 0;
 }
+

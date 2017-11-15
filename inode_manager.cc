@@ -1,6 +1,8 @@
 #include <ctime>
 #include "inode_manager.h"
 
+#define NORMAL_BLOCK -1
+
 // disk layer -----------------------------------------
 
 disk::disk()
@@ -103,11 +105,15 @@ block_manager::free_block(uint32_t id)
 block_manager::block_manager()
 {
   d = new disk();
+  char buf[BLOCK_SIZE];
 
   // format the disk
   sb.size = BLOCK_SIZE * BLOCK_NUM;
   sb.nblocks = BLOCK_NUM;
   sb.ninodes = INODE_NUM;
+  sb.version = 0;
+  sb.next_inum = 1;
+  sb.seq_end = 1;
 
   int init_num = 0;
   // root block
@@ -121,6 +127,10 @@ block_manager::block_manager()
   for(int i = 0; i < init_num; i++){
     alloc_block();
   }
+  
+  bzero(buf, BLOCK_SIZE);
+  memcpy(buf, &sb, sizeof(sb));
+  write_block(1, buf);
 
   pthread_mutex_init(&bitmap_mutex, NULL);
 }
@@ -163,32 +173,32 @@ inode_manager::alloc_inode(uint32_t type)
    * if you get some heap memory, do not forget to free it.
    */
   char buf[BLOCK_SIZE];
-  uint32_t inum = 1;
+  unsigned int inum;
+  unsigned int seq;
 
   pthread_mutex_lock(&inode_mutex);
-  while(inum <= INODE_NUM){
-    bm -> read_block(IBLOCK(inum, BLOCK_NUM), buf);
-    for(int i = 0; i < IPB && inum <= INODE_NUM; i++){
-      inode_t *inode = (inode_t *)buf + i;
-      if(inode-> type == 0){
-        inode -> type = type;
-        inode -> size = 0;
-
-        inode -> atime = std::time(0);
-        inode -> mtime = std::time(0);
-        inode -> ctime = std::time(0);
-
-        bm->write_block(IBLOCK(inum, BLOCK_NUM), buf);
-        pthread_mutex_unlock(&inode_mutex);
-        return inum;
-      }else{
-        inum++;
-      }
-    }
-  }
-
+  inum = bm->sb.next_inum++;
+  seq = bm->sb.seq_end++;
+  bzero(buf, BLOCK_SIZE);
+  memcpy(buf, &bm->sb, sizeof(bm->sb));
+  bm->write_block(1, buf);
   pthread_mutex_unlock(&inode_mutex);
-  exit(1);
+
+  bm -> read_block(IBLOCK(seq, bm->sb.nblocks), buf);
+  inode_t *ino = (inode_t *)buf;
+  
+  ino -> type = type;
+  ino -> check_point = NORMAL_BLOCK;
+  ino -> inum = inum;
+  ino -> seq = seq;
+  ino -> size = 0;
+  ino -> atime = std::time(0);
+  ino -> mtime = std::time(0);
+  ino -> ctime = std::time(0);
+
+  bm->write_block(IBLOCK(seq, BLOCK_NUM), buf);
+  
+  return inum;
 }
 
   void
@@ -209,35 +219,93 @@ inode_manager::free_inode(uint32_t inum)
   }
 }
 
+#define MIN(a,b) ((a)<(b) ? (a) : (b))
 
 /* Return an inode structure by inum, NULL otherwise.
  * Caller should release the memory. */
   struct inode* 
 inode_manager::get_inode(uint32_t inum)
 {
-  struct inode *ino, *ino_disk;
+  inode_t *ino, *ino_disk, *res;
+  unsigned int seq;
   char buf[BLOCK_SIZE];
+  char buf2[BLOCK_SIZE];
+  char buf3[BLOCK_SIZE];
+  char new_indirect[BLOCK_SIZE];
+  char old_indirect[BLOCK_SIZE];
+  bool is_old = false;
 
   printf("\tim: get_inode %d\n", inum);
 
-  if (inum < 0 || inum >= INODE_NUM) {
+  pthread_mutex_lock(&inode_mutex);
+  seq = bm -> sb.seq_end - 1;
+  while (seq > 0) {
+    bm -> read_block(IBLOCK(seq, bm -> sb.nblocks), buf);
+    ino = (inode_t *)buf;
+    if (ino -> check_point != NORMAL_BLOCK) {
+      is_old = true;
+    } else if (ino -> inum == inum) {
+      if (ino -> type == 0) {
+        pthread_mutex_unlock(&inode_mutex);
+        return NULL;
+      }
+      break;
+    }
+    seq--;
+  }
+
+  if (seq == 0) {
     printf("\tim: inum out of range\n");
+    pthread_mutex_unlock(&inode_mutex);
     return NULL;
   }
 
-  bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
-  // printf("%s:%d\n", __FILE__, __LINE__);
+  if (is_old) {
+    seq = bm -> sb.seq_end++;
+    bzero(buf2, sizeof(buf2));
+    memcpy(buf2, &bm->sb, sizeof(bm->sb));
+    bm->write_block(1, buf2);
 
-  ino_disk = (struct inode*)buf + inum%IPB;
-  if (ino_disk->type == 0) {
-    printf("\tim: inode not exist\n");
-    return NULL;
+    bm->read_block(IBLOCK(seq, bm->sb.nblocks), buf2);
+    ino_disk = (inode_t *)buf2;
+    ino_disk->type = ino->type;
+    ino_disk->check_point = ino->check_point;
+    ino_disk->inum = ino->inum;
+    ino_disk->seq = seq;
+    ino_disk->size = ino->size;
+    ino_disk->atime = ino->atime;
+    ino_disk->mtime = ino->mtime;
+    ino_disk->ctime = ino->ctime;
+
+    unsigned int block_num = (ino->size + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    
+    for(unsigned int i = 0; i < MIN(block_num, NDIRECT); i++){
+      bm->read_block(ino->blocks[i], buf3);
+      printf("copying %s    --------  ", buf3);
+      ino_disk->blocks[i] = bm->alloc_block();
+      bm->write_block(ino_disk->blocks[i], buf3);
+    }
+
+    if(block_num > NDIRECT){
+      bm->read_block(ino->blocks[NDIRECT], old_indirect);
+      for(unsigned int i = NDIRECT; i < block_num; i++){
+        bm->read_block(old_indirect[i - NDIRECT], buf3);
+        new_indirect[i - NDIRECT] = bm->alloc_block();
+        bm->write_block(new_indirect[i - NDIRECT], buf3);
+      }
+      ino_disk->blocks[NDIRECT] = bm->alloc_block();
+      bm->write_block(ino_disk->blocks[NDIRECT], new_indirect);
+    }
+
+    bm->write_block(IBLOCK(seq, bm->sb.nblocks), buf2);
+    ino = ino_disk;
   }
+  
+  res = (inode_t*)malloc(sizeof(inode_t));
+  *res = *ino;
 
-  ino = (struct inode*)malloc(sizeof(struct inode));
-  *ino = *ino_disk;
-
-  return ino;
+  pthread_mutex_unlock(&inode_mutex);
+  return res;
 }
 
   void
@@ -250,13 +318,12 @@ inode_manager::put_inode(uint32_t inum, struct inode *ino)
   if (ino == NULL)
     return;
 
-  bm->read_block(IBLOCK(inum, bm->sb.nblocks), buf);
-  ino_disk = (struct inode*)buf + inum%IPB;
+  bm->read_block(IBLOCK(ino->seq, bm->sb.nblocks), buf);
+  ino_disk = (struct inode*)buf + ino->seq%IPB;
   *ino_disk = *ino;
-  bm->write_block(IBLOCK(inum, bm->sb.nblocks), buf);
+  printf("\tim: put_inode inode_seq %d\n", ino->seq);
+  bm->write_block(IBLOCK(ino->seq, bm->sb.nblocks), buf);
 }
-
-#define MIN(a,b) ((a)<(b) ? (a) : (b))
 
 /* Get all the data of a file by inum. 
  * Return alloced data, should be freed by caller. */
@@ -274,8 +341,8 @@ inode_manager::read_file(uint32_t inum, char **buf_out, int *size)
   char *buf = (char *) malloc(ino -> size);
   int block_num = (ino -> size + BLOCK_SIZE - 1) / BLOCK_SIZE;
   int offset = 0;
-  
-  
+
+
   if(block_num <= NDIRECT){
     for(int i = 0; i < block_num; i++){
       if(ino -> size - offset > BLOCK_SIZE){
@@ -451,32 +518,80 @@ inode_manager::remove_file(uint32_t inum)
    * note: you need to consider about both the data block and inode of the file
    * do not forget to free memory if necessary.
    */
-  inode_t *ino = get_inode(inum);
-  char indirect_blocks[BLOCK_SIZE];
+  
+  unsigned int seq;
+  char buf[BLOCK_SIZE];
+  inode_t * ino;
 
-  for(int i = 0; i < NDIRECT; i++){
-    if(ino -> blocks[i]){
-      bm -> free_block(ino -> blocks[i]);
-      ino -> blocks[i] = 0;
-    }else{
-      break;
-    }
-  }
-    
-  if(ino -> blocks[NDIRECT]){
-    bm -> read_block(ino -> blocks[NDIRECT], indirect_blocks);
-    for(unsigned int i = 0; i < NINDIRECT; i++){
-      if((blockid_t *) indirect_blocks + i){
-        bm -> free_block(((blockid_t *) indirect_blocks)[i]);
-        ((blockid_t *) indirect_blocks)[i] = 0;
-      }else{
-        break;
-      }
-    }
-    bm -> write_block(ino -> blocks[NDIRECT], indirect_blocks);
-    ino -> blocks[NDIRECT] = 0;
-  }
-    
-  free_inode(inum);
-  free(ino);
+  pthread_mutex_lock(&inode_mutex);
+  seq = bm->sb.seq_end++;
+  bm->read_block(IBLOCK(seq, bm->sb.nblocks), buf);
+  ino = (inode_t *)buf;
+  ino->check_point = NORMAL_BLOCK;
+  ino->type = 0;
+  ino->inum = inum;
+  bm->write_block(IBLOCK(seq, bm->sb.nblocks), buf);
+  bzero(buf, sizeof(buf));
+  memcpy(buf, &bm->sb, sizeof(bm->sb));
+  bm->write_block(1, buf);
+  pthread_mutex_unlock(&inode_mutex);
 }
+
+  void
+inode_manager::commit()
+{
+  unsigned int seq;
+  char buf[BLOCK_SIZE];
+  pthread_mutex_lock(&inode_mutex);
+  seq = bm->sb.seq_end++;
+
+  bm->read_block(IBLOCK(seq, bm->sb.nblocks), buf);
+  inode_t *ino = (inode_t*) buf;
+  ino->check_point = bm->sb.version++;
+  bm->write_block(IBLOCK(seq, bm->sb.nblocks), buf);
+  
+  bzero(buf, sizeof(buf));
+  memcpy(buf, &bm->sb, sizeof(bm->sb));
+  bm->write_block(1, buf);
+  pthread_mutex_unlock(&inode_mutex);
+}
+
+  void
+inode_manager::undo()
+{
+  char buf[BLOCK_SIZE];
+  pthread_mutex_lock(&inode_mutex);
+  --bm->sb.version;
+  while (true) {
+      bm->read_block(IBLOCK(--bm->sb.seq_end, bm->sb.nblocks), buf);
+      inode_t * ino = (inode_t *)buf;
+      if (ino->check_point == (short)bm->sb.version) {
+          bzero(buf, sizeof(buf));
+          memcpy(buf, &bm->sb, sizeof(bm->sb));
+          bm->write_block(1, buf);
+          pthread_mutex_unlock(&inode_mutex);
+          return;
+      }
+  }
+}
+
+  void
+inode_manager::redo()
+{
+  char buf[BLOCK_SIZE];
+  pthread_mutex_lock(&inode_mutex);
+  ++bm->sb.version;
+  while (true) {
+      bm->read_block(IBLOCK(bm->sb.seq_end, bm->sb.nblocks), buf);
+      inode_t * ino = (inode_t *)buf;
+      if (ino->check_point == (short)bm->sb.version) {
+          bzero(buf, sizeof(buf));
+          memcpy(buf, &bm->sb, sizeof(bm->sb));
+          bm->write_block(1, buf);
+          pthread_mutex_unlock(&inode_mutex);
+          return;
+      }
+      ++bm->sb.seq_end;
+  }
+}
+

@@ -584,3 +584,24 @@ int yfs_client::symlink(inum parent, const char *name, const char *link,
   return r;
 }
 
+int yfs_client::commit()
+{
+  int r = OK;
+  r = ec -> commit();
+  return r;
+}
+
+int yfs_client::undo()
+{
+  int r = OK;
+  r = ec -> undo();
+  return r;
+}
+
+int yfs_client::redo()
+{
+  int r = OK;
+  r = ec -> redo();
+  return r;
+}
+
