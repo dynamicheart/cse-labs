@@ -48,14 +48,14 @@ yfs_client::isfile(inum inum)
   if (a.type == extent_protocol::T_FILE) {
     printf("isfile: %lld is a file\n", inum);
     return true;
-  } 
+  }
   printf("isfile: %lld is not a file\n", inum);
   return false;
 }
 /** Your code here for Lab...
  * You may need to add routines such as
  * readlink, issymlink here to implement symbolic link.
- * 
+ *
  * */
 
   bool
@@ -74,7 +74,7 @@ yfs_client::isdir(inum inum)
   if (a.type == extent_protocol::T_DIR) {
     printf("ISDIR: %lld is a dir\n", inum);
     return true;
-  } 
+  }
   printf("ISDIR: %lld is not a dir\n", inum);
   return false;
 }
@@ -92,7 +92,7 @@ yfs_client::issymlink(inum inum)
   if (a.type == extent_protocol::T_DIR) {
     printf("ISSYMLINK: %lld is a symlink\n", inum);
     return true;
-  } 
+  }
   printf("ISSYMLINK: %lld is not a symlink\n", inum);
   return false;
 }
@@ -184,16 +184,16 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
 
   /*
    * your lab2 code goes here.
-   * note: lookup is what you need to check if file exist;
+   * note: lookup_without_lock is what you need to check if file exist;
    * after create file or dir, you must remember to modify the parent infomation.
    */
   bool found = false;
   std::string buf;
 
   lc -> acquire(parent);
-  r = lookup(parent, name, found, ino_out);
+  r = lookup_without_lock(parent, name, found, ino_out);
   if(r != OK){
-    printf("CREATE: Fail to lookup the parent directory\n");
+    printf("CREATE: Fail to lookup_without_lock the parent directory\n");
     lc -> release(parent);
     return r;
   }
@@ -225,7 +225,7 @@ yfs_client::create(inum parent, const char *name, mode_t mode, inum &ino_out)
     lc -> release(parent);
     return r;
   }
-  
+
   lc -> release(parent);
   return r;
 }
@@ -237,16 +237,16 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
 
   /*
    * your lab2 code goes here.
-   * note: lookup is what you need to check if directory exist;
+   * note: lookup_without_lock is what you need to check if directory exist;
    * after create file or dir, you must remember to modify the parent infomation.
    */
   bool found = false;
   std::string buf;
 
   lc -> acquire(parent);
-  r = lookup(parent, name, found, ino_out);
+  r = lookup_without_lock(parent, name, found, ino_out);
   if(r != OK){
-    printf("MKDIR: Fail to lookup the parent directory\n");
+    printf("MKDIR: Fail to lookup_without_lock the parent directory\n");
     lc -> release(parent);
     return r;
   }
@@ -278,19 +278,61 @@ yfs_client::mkdir(inum parent, const char *name, mode_t mode, inum &ino_out)
     lc -> release(parent);
     return r;
   }
-  
+
   lc -> release(parent);
   return r;
 }
 
-  int
+int
 yfs_client::lookup(inum parent, const char *name, bool &found, inum &ino_out)
+{
+int r = OK;
+
+/*
+ * your lab2 code goes here.
+ * note: lookup file from parent dir according to name;
+ * you should design the format of directory content.
+ */
+std::string buf, name_str = std::string(name);
+size_t cur = 0, next = 0;
+
+lc -> acquire(parent);
+r = ec ->get(parent, buf);
+if(r != OK){
+  printf("LOOKUP: Parent directory not exists\n");
+  lc -> release(parent);
+  return r;
+}
+
+while(cur < buf.size()){
+  next = buf.find("/", cur);
+  std::string cur_name = buf.substr(cur, next - cur);
+  cur = next + 1;
+
+  next = buf.find("/", cur);
+  inum cur_ino = n2i(buf.substr(cur, next - cur));
+  cur = next + 1;
+
+  if(cur_name == name_str){
+    ino_out = cur_ino;
+    found = true;
+    lc -> release(parent);
+    return r;
+  }
+}
+
+lc -> release(parent);
+return r;
+}
+
+  int
+yfs_client::lookup_without_lock(inum parent, const char *name, bool &found, inum &ino_out)
 {
   int r = OK;
 
   /*
    * your lab2 code goes here.
-   * note: lookup file from parent dir according to name;
+   * note: lookup_without_lock file from parent dir according to name;
    * you should design the format of directory content.
    */
   std::string buf, name_str = std::string(name);
@@ -457,7 +499,7 @@ int yfs_client::unlink(inum parent,const char *name)
 
     next = buf.find("/", cur);
     entry_name = buf.substr(cur, next - cur);
-    cur = next + 1; 
+    cur = next + 1;
 
     next = buf.find("/", cur);
     ino = n2i(buf.substr(cur, next - cur));
@@ -523,7 +565,7 @@ int yfs_client::symlink(inum parent, const char *name, const char *link,
   std::string pbuf, sbuf;
 
   lc -> acquire(parent);
-  r = lookup(parent, name, found, ino_out);
+  r = lookup_without_lock(parent, name, found, ino_out);
   if(r != OK){
     printf("SYMLINK: Can not look up the parent directory\n");
     lc -> release(parent);
@@ -569,4 +611,3 @@ int yfs_client::symlink(inum parent, const char *name, const char *link,
   lc -> release(parent);
   return r;
 }
-
