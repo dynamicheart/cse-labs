@@ -1,0 +1,7 @@
+*.o
+*.d
+foo.txt.yfs*
+tmprand
+*.log
+*.tgz
+.tags*
