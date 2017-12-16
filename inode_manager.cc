@@ -1,8 +1,9 @@
 #include <ctime>
-#include <pthread>
+#include <pthread.h>
 #include "inode_manager.h"
 
 #define NORMAL_BLOCK -1
+#define BLOCK_AMPLIFICATION 2
 
 // disk layer -----------------------------------------
 
@@ -62,7 +63,7 @@ block_manager::alloc_block()
   char mask;
   blockid_t bid = 0;
   pthread_mutex_lock(&bitmap_mutex);
-  while(bid < BLOCK_NUM){
+  while(bid < sb.nblocks){
     read_block(BBLOCK(bid), block);
     for(int i = 0; i < BLOCK_SIZE; i ++){
       current_byte = block[i];
@@ -109,8 +110,8 @@ block_manager::block_manager()
   char buf[BLOCK_SIZE];
 
   // format the disk
-  sb.size = BLOCK_SIZE * BLOCK_NUM;
-  sb.nblocks = BLOCK_NUM;
+  sb.size = BLOCK_SIZE * BLOCK_NUM / BLOCK_AMPLIFICATION;
+  sb.nblocks = BLOCK_NUM / BLOCK_AMPLIFICATION;
   sb.ninodes = INODE_NUM;
   sb.version = 0;
   sb.next_inum = 1;
@@ -122,9 +123,9 @@ block_manager::block_manager()
   // supper block
   init_num++;
   // block bitmap
-  init_num +=  (BLOCK_NUM + BPB - 1) / BPB;
+  init_num +=  (sb.nblocks + BPB - 1) / BPB;
   // inode table
-  init_num += (INODE_NUM + IPB - 1) / IPB;
+  init_num += (sb.ninodes + IPB - 1) / IPB;
   for(int i = 0; i < init_num; i++){
     alloc_block();
   }
@@ -136,16 +137,82 @@ block_manager::block_manager()
   pthread_mutex_init(&bitmap_mutex, NULL);
 }
 
+inline char parity(char x)
+{
+  char result = x;
+  result = result ^ (x >> 4);
+  result = result ^ (x >> 2);
+  result = result ^ (x >> 1);
+  result &= 0x1;
+  return result;
+}
+
+// 4 bits to 7 bits
+inline char hamming_encode(char raw)
+{
+  // code'bit structure: [useless][1][2][3][4][5][6][7]
+  char code = raw & 0x7;  //Origin data in position 5, 6, 7. Direction from left to right, the highest bit is useless.
+  code |= (raw & 0x8) << 1; //Origin data in position 3.
+  code |= parity(code & 0x15) << 6; // parity bit in position 1.
+  code |= parity(code & 0x13) << 5; // parity bit in position 2.
+  code |= parity(code & 0x7) << 3; // parity bit in position 4.
+  return code;
+}
+
+// 7 bits to 4 bits
+inline char hamming_decode(char code)
+{
+  int position = 0;
+  char raw;
+  if(((code & 0x40) >> 6) != parity(code & 0x15)) {
+    position += 1;
+  }
+  if(((code & 0x20) >> 5) != parity(code & 0x13)) {
+    position += 2;
+  }
+  if(((code & 0x08) >> 3) != parity(code & 0x7)) {
+    position += 4;
+  }
+
+  if(position) {
+    code ^= 1 << (7 - position);
+  }
+
+  raw = code & 0x7;
+  raw |= (code & 0x10) >> 1;
+  return raw;
+}
+
   void
 block_manager::read_block(uint32_t id, char *buf)
 {
-  d->read_block(id, buf);
+  char codedata_low[BLOCK_SIZE], codedata_high[BLOCK_SIZE];
+  d->read_block(id * BLOCK_AMPLIFICATION, codedata_low);
+  d->read_block(id * BLOCK_AMPLIFICATION + 1, codedata_high);
+  for(int i = 0; i < BLOCK_SIZE; i++) {
+    char low = hamming_decode(codedata_low[i]);
+    char high = hamming_decode(codedata_high[i]);
+
+    buf[i] = (high << 4) | low;
+  }
+  // rectify
+  write_block(id, buf);
 }
 
   void
 block_manager::write_block(uint32_t id, const char *buf)
 {
-  d->write_block(id, buf);
+  char codedata_low[BLOCK_SIZE], codedata_high[BLOCK_SIZE];
+  for(int i = 0; i < BLOCK_SIZE; i++) {
+    char low = hamming_encode(buf[i] & 0xF);
+    char high = hamming_encode((buf[i] >> 4) & 0xF);
+
+    codedata_low[i] = low;
+    codedata_high[i] = high;
+  }
+
+  d->write_block(id * BLOCK_AMPLIFICATION, codedata_low);
+  d->write_block(id * BLOCK_AMPLIFICATION + 1, codedata_high);
 }
 
 // inode layer -----------------------------------------
@@ -197,7 +264,7 @@ inode_manager::alloc_inode(uint32_t type)
   ino -> mtime = std::time(0);
   ino -> ctime = std::time(0);
 
-  bm->write_block(IBLOCK(seq, BLOCK_NUM), buf);
+  bm->write_block(IBLOCK(seq, bm->sb.nblocks), buf);
 
   return inum;
 }
@@ -212,11 +279,11 @@ inode_manager::free_inode(uint32_t inum)
    * do not forget to free memory if necessary.
    */
   char buf[BLOCK_SIZE];
-  bm -> read_block(IBLOCK(inum, BLOCK_NUM), buf);
+  bm -> read_block(IBLOCK(inum, bm->sb.nblocks), buf);
   inode_t *ino = (inode_t *)buf + (inum - 1) % IPB;
   if(ino -> type){
     ino -> type = 0;
-    bm -> write_block(IBLOCK(inum, BLOCK_NUM), buf);
+    bm -> write_block(IBLOCK(inum, bm->sb.nblocks), buf);
   }
 }
 
