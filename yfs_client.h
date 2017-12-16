@@ -76,6 +76,7 @@ class yfs_client {
 
   int setattr(inum, filestat, unsigned long);
   int lookup(inum, const char *, bool &, inum &);
+  int lookup_without_lock(inum, const char *, bool &, inum &);
   int create(inum, const char *, mode_t, inum &);
   int readdir(inum, std::list<dirent> &);
   int write(inum, size_t, off_t, const char *, size_t &);
@@ -93,4 +94,3 @@ class yfs_client {
 };
 
 #endif
-
