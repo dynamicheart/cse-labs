@@ -59,7 +59,7 @@ proposer::isrunning()
 
 // check if the servers in l2 contains a majority of servers in l1
 bool
-proposer::majority(const std::vector<std::string> &l1, 
+proposer::majority(const std::vector<std::string> &l1,
 		const std::vector<std::string> &l2)
 {
   unsigned n = 0;
@@ -71,9 +71,9 @@ proposer::majority(const std::vector<std::string> &l1,
   return n >= (l1.size() >> 1) + 1;
 }
 
-proposer::proposer(class paxos_change *_cfg, class acceptor *_acceptor, 
+proposer::proposer(class paxos_change *_cfg, class acceptor *_acceptor,
 		   std::string _me)
-  : cfg(_cfg), acc (_acceptor), me (_me), break1 (false), break2 (false), 
+  : cfg(_cfg), acc (_acceptor), me (_me), break1 (false), break2 (false),
     stable (true)
 {
   VERIFY (pthread_mutex_init(&pxs_mutex, NULL) == 0);
@@ -146,14 +146,48 @@ proposer::run(int instance, std::vector<std::string> cur_nodes, std::string newv
 // otherwise fill in accepts with set of nodes that accepted,
 // set v to the v_a with the highest n_a, and return true.
 bool
-proposer::prepare(unsigned instance, std::vector<std::string> &accepts, 
+proposer::prepare(unsigned instance, std::vector<std::string> &accepts,
          std::vector<std::string> nodes,
          std::string &v)
 {
   // You fill this in for Lab 6
   // Note: if got an "oldinstance" reply, commit the instance using
   // acc->commit(...), and return false.
-  return false;
+  paxos_protocol::preparearg arg;
+  arg.instance = instance;
+  arg.n = my_n;
+
+  prop_t max;
+  max.n = 0;
+  max.m.clear();
+
+  for(std::vector<std::string>::iterator it = nodes.begin(); it != nodes.end(); it++) {
+    handle h(*it);
+    if(h.safebind()) {
+      paxos_protocol::prepareres resp;
+      VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
+      int ret = h.safebind()->call(paxos_protocol::preparereq, me, arg, resp, rpcc::to(1000));
+      VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
+      if(ret == paxos_protocol::OK) {
+        if(!resp.oldinstance) {
+          if(resp.accept) {
+            accepts.push_back(*it);
+            if(resp.n_a > max) {
+              max = resp.n_a;
+              v = resp.v_a;
+            }
+          }
+        } else {
+          acc->commit(instance, resp.v_a);
+          return false;
+        }
+      } else {
+
+      }
+    }
+  }
+
+  return true;
 }
 
 // run() calls this to send out accept RPCs to accepts.
@@ -163,16 +197,53 @@ proposer::accept(unsigned instance, std::vector<std::string> &accepts,
         std::vector<std::string> nodes, std::string v)
 {
   // You fill this in for Lab 6
+  paxos_protocol::acceptarg arg;
+  arg.instance = instance;
+  arg.n = my_n;
+  arg.v = v;
+
+  for(std::vector<std::string>::iterator it = nodes.begin(); it != nodes.end(); it++) {
+    handle h(*it);
+    if(h.safebind()) {
+      bool r;
+      VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
+      int ret = h.safebind()->call(paxos_protocol::acceptreq, me, arg, r, rpcc::to(1000));
+      VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
+      if(ret == paxos_protocol::OK) {
+        if(r) {
+          accepts.push_back(*it);
+        } else {
+
+        }
+      }
+    }
+  }
 }
 
 void
-proposer::decide(unsigned instance, std::vector<std::string> accepts, 
+proposer::decide(unsigned instance, std::vector<std::string> accepts,
 	      std::string v)
 {
   // You fill this in for Lab 6
+  paxos_protocol::decidearg arg;
+  arg.instance = instance;
+  arg.v = v;
+
+  for(std::vector<std::string>::iterator it = accepts.begin(); it != accepts.end(); it++) {
+    handle h(*it);
+    if(h.safebind()) {
+      int r;
+      VERIFY(pthread_mutex_unlock(&pxs_mutex) == 0);
+      int ret = h.safebind()->call(paxos_protocol::decidereq, me, arg, r, rpcc::to(1000));
+      VERIFY(pthread_mutex_lock(&pxs_mutex) == 0);
+      if(ret != paxos_protocol::OK) {
+
+      }
+    }
+  }
 }
 
-acceptor::acceptor(class paxos_change *_cfg, bool _first, std::string _me, 
+acceptor::acceptor(class paxos_change *_cfg, bool _first, std::string _me,
 	     std::string _value)
   : cfg(_cfg), me (_me), instance_h(0)
 {
@@ -205,6 +276,23 @@ acceptor::preparereq(std::string src, paxos_protocol::preparearg a,
   // You fill this in for Lab 6
   // Remember to initialize *BOTH* r.accept and r.oldinstance appropriately.
   // Remember to *log* the proposal if the proposal is accepted.
+  ScopedLock ml(&pxs_mutex);
+  if(a.instance <= instance_h) {
+    r.oldinstance = 1;
+    r.v_a = value(a.instance);
+  } else {
+    r.oldinstance = 0;
+    if(a.n > n_h) {
+      r.accept = 1;
+      r.n_a = n_a;
+      r.v_a = v_a;
+      n_h = a.n;
+      l->logprop(n_h);
+    } else {
+      r.accept = 0;
+    }
+  }
+
   return paxos_protocol::OK;
 
 }
@@ -215,8 +303,21 @@ acceptor::acceptreq(std::string src, paxos_protocol::acceptarg a, bool &r)
 {
   // You fill this in for Lab 6
   // Remember to *log* the accept if the proposal is accepted.
-
-  return paxos_protocol::OK;
+  ScopedLock ml(&pxs_mutex);
+  if(a.instance > instance_h) {
+    if(a.n >= n_h) {
+      r = 1;
+      n_a = a.n;
+      v_a = a.v;
+      l->logaccept(n_a, v_a);
+    } else {
+      r = 0;
+    }
+    return paxos_protocol::OK;
+  } else {
+    r = 0;
+    return paxos_protocol::ERR;
+  }
 }
 
 // the src argument is only for debug purpose
@@ -224,7 +325,7 @@ paxos_protocol::status
 acceptor::decidereq(std::string src, paxos_protocol::decidearg a, int &r)
 {
   ScopedLock ml(&pxs_mutex);
-  tprintf("decidereq for accepted instance %d (my instance %d) v=%s\n", 
+  tprintf("decidereq for accepted instance %d (my instance %d) v=%s\n",
 	 a.instance, instance_h, v_a.c_str());
   if (a.instance == instance_h + 1) {
     VERIFY(v_a == a.v);

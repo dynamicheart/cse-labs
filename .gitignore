@@ -5,3 +5,4 @@ tmprand
 *.log
 *.tgz
 .tags*
+config
